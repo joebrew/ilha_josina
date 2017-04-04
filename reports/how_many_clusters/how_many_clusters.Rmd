@@ -1,0 +1,190 @@
+---
+title: "Ilha Josina Ivermectin Trial"
+subtitle: "Preliminary report: cluster identification"
+author: "Joe Brew and Carlos Chaccour"
+date: "`r Sys.Date()`"
+output:
+  tufte::tufte_html: default
+  tufte::tufte_handout:
+    citation_package: natbib
+    latex_engine: xelatex
+  tufte::tufte_book:
+    citation_package: natbib
+    latex_engine: xelatex
+link-citations: yes
+---
+
+```{r setup, include=FALSE}
+library(tufte)
+library(leaflet)
+library(tidyverse)
+library(knitr)
+library(leaflet)
+library(RColorBrewer)
+library(sp)
+library(rgeos)
+# invalidate cache when the tufte version changes
+knitr::opts_chunk$set(tidy = FALSE, cache.extra = packageVersion('tufte'))
+options(htmltools.dir.version = FALSE)
+# Basic knitr options
+opts_chunk$set(comment = NA, 
+               echo = FALSE, 
+               warning = FALSE, 
+               message = FALSE, 
+               error = TRUE, 
+               cache = FALSE)
+```
+
+```{r}
+# Algorithm for creating clusters
+source('../../lib/cluster_optimize.R')
+
+# Data preparation
+if('prepared_data.RData' %in% dir()){
+  load('prepared_data.RData')
+} else {
+  source('prepare_data.R')
+  save(results,
+       ij,
+       ij_children,
+       file = 'prepared_data.RData')
+}
+
+
+# Get results of our simulations
+x <- results %>%
+  group_by(iter) %>%
+  summarise(start = first(start),
+            rest = first(rest),
+            walk_along = first(walk_along),
+            n = n(),
+            ib = length(which(!is.na(cluster)))) %>%
+  mutate(pib = ib / n * 100) %>%
+  ungroup %>%
+  mutate(p_in_core = 100 - pib) %>%
+  mutate(n_in_core = n - ib)
+
+# Get that which yields the most number of successes
+best <- x %>% filter(pib == min(pib))
+best <- results[results$iter == best$iter[1],]
+x <- best
+
+# x <- results
+# 
+# Define some colors for plotting
+cols <- colorRampPalette(brewer.pal(9, 'Spectral'))(length(unique(x$cluster[!is.na(x$cluster)])))
+cols <- sample(cols, length(cols))
+colors <- cols[x$cluster]
+colors <- ifelse(is.na(colors), 'grey', colors)
+
+# Create a leaflet map
+l <- leaflet() %>%
+  # addProviderTiles('Stamen.Toner') %>%
+  addTiles() %>%
+  # addProviderTiles('Esri.NatGeoWorldMap') %>%
+  addCircleMarkers(lng = x$lon,
+                   lat = x$lat,
+                   color = colors,
+                   radius = 0.2,
+                   popup = paste0('Cluster ', x$cluster))
+
+# Add polygons for convex hull and for buffer zone
+buffer <- 1000
+for (i in 1:length(unique(x$cluster[!is.na(x$cluster)]))){
+
+  this_cluster <- x %>% filter(cluster == i)
+  this_color <- cols[i]
+  lf <- this_cluster
+  coordinates(lf) <- ~lon+lat
+  proj4string(lf) <- proj4string(ij)
+  lf <- rgeos::gConvexHull(lf)
+  # Transform to projected form
+  lfp <- spTransform(lf, CRS( "+init=epsg:3347" ) )
+  # Get buffer at 1km
+  lfb <- rgeos::gBuffer(lfp, width = buffer)
+  # Un -project lfb
+  lfb <- spTransform(lfb, proj4string(ij))
+  lfp <- spTransform(lfp, proj4string(ij) )
+  
+  if(!class(lfp)[[1]] %in% c('SpatialPoints', 'NULL')){
+      l <- l %>%
+    addPolylines(data = lfp,
+                 color = this_color,
+                 weight = 2,
+                 fill = TRUE) %>%
+    addPolylines(data = lfb,
+                 color = this_color,
+                 weight = 1)
+  }
+}
+
+```
+
+# Context
+
+This document is a first step in analyzing the feasibility of carrying out an Ivermectin trial in the area of Ilha Josina, District of Manhiça, Province of Maputo, Mozambique. Its objective is to quantify how many clusters of 50 children (age < 5) could be formed, if each of those clusters had a "buffer" of 1 kilometers (ie, minimum distance of 2 kilometers) between two children of two different buffers.
+
+# Methods
+
+Census data were used, with a snapshot from May 6, 2016. Residents of Ilha Josina were identified through polgyonal overlay with publicly avaiable administrative shapefiles. Those who were < 5 years of age as of the snapshot date were considered eligible. 
+
+A custom algorithm was devised for division into clusters. The algorithm took as parameters multiple different "strategies" for creating clusters (centroid-based, "random walk" based, etc.). A simulations-based approach was used to identify the optimal strategy for the case of Ilha Josina.^["Optimal" being the maximum number of children/clusters meeting the buffering and age requirements.]
+
+Full code for the algorithm and its implementation is available online.^[https://github.com/joebrew/ilha_josina]
+
+# Results  
+
+Of the `r nrow(ij_children)` residing in Ilha Josina as of the time of our snapshot, the maximum number of 50-child clusters we can form is `r max(best$cluster, na.rm = TRUE)` (ie, `r length(which(!is.na(best$cluster) & !best$in_buffer))` children). 
+
+Our cluster centroids can be viewed below.
+
+```{r}
+centroids <- best %>%
+  filter(!is.na(cluster)) %>%
+  group_by(cluster) %>%
+  summarise(lon = mean(lon),
+            lat = mean(lat))
+plot(ij)
+points(centroids$lon,
+       centroids$lat,
+       col = cols)
+```
+
+The below plot shows the actual boundaries of our clusters, with buffers.
+
+```{r}
+plot(ij)
+
+# Add polygons for convex hull and for buffer zone
+buffer <- 1000
+for (i in 1:length(unique(x$cluster[!is.na(x$cluster)]))){
+
+  this_cluster <- x %>% filter(cluster == i)
+  this_color <- cols[i]
+  lf <- this_cluster
+  coordinates(lf) <- ~lon+lat
+  proj4string(lf) <- proj4string(ij)
+  lf <- rgeos::gConvexHull(lf)
+  # Transform to projected form
+  lfp <- spTransform(lf, CRS( "+init=epsg:3347" ) )
+  # Get buffer at 1km
+  lfb <- rgeos::gBuffer(lfp, width = buffer)
+  # Un -project lfb
+  lfb <- spTransform(lfb, proj4string(ij))
+  lfp <- spTransform(lfp, proj4string(ij) )
+  
+  if(!class(lfp)[[1]] %in% c('SpatialPoints', 'NULL')){
+    plot(lfp, add = TRUE, col = cols[i])
+    plot(lfb, add = TRUE,
+         col = adjustcolor(cols[i], alpha. = 0.6),
+         border = NA)
+  }
+}
+
+```
+
+The below interactive map shows all clusters, buffers, and child residents. Points are children, colored by their respective clusters. Grey points are children residing outside of core cluster areas (ie, buffers or unclusterable). Thick lines show cluster borders; thin lines show cluster buffer boundaries.
+
+```{r}
+l
+```
