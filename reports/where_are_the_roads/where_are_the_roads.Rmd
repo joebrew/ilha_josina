@@ -1,0 +1,58 @@
+---
+title: "Ilha Josina Ivermectin Trial"
+subtitle: "Preliminary report: where are the roads"
+author: "Joe Brew and Carlos Chaccour"
+date: "`r Sys.Date()`"
+output:
+  tufte::tufte_html: default
+  tufte::tufte_handout:
+    citation_package: natbib
+    latex_engine: xelatex
+  tufte::tufte_book:
+    citation_package: natbib
+    latex_engine: xelatex
+link-citations: yes
+---
+
+```{r setup, include=FALSE}
+library(tufte)
+library(leaflet)
+library(tidyverse)
+library(knitr)
+library(leaflet)
+library(RColorBrewer)
+library(sp)
+library(rgeos)
+# invalidate cache when the tufte version changes
+knitr::opts_chunk$set(tidy = FALSE, cache.extra = packageVersion('tufte'))
+options(htmltools.dir.version = FALSE)
+# Basic knitr options
+opts_chunk$set(comment = NA, 
+               echo = FALSE, 
+               warning = FALSE, 
+               message = FALSE, 
+               error = TRUE, 
+               cache = FALSE)
+```
+
+```{r}
+library(cism)
+# Get map of manhica and ilha josina
+ij <- man3
+ij <- ij[ij$NAME_3 == 'Ilha Josina Machel',]
+
+library(osmar)
+src <- osmsource_api()
+bb <- corner_bbox(left = 32.8182,
+                  bottom = -25.3782,
+                  right = 33.1403,
+                  top = -25.0613)
+  # bb <- center_bbox(-1.53492, 53.81934, 1000, 1000)
+ctown <- get_osm(bb, source = src)
+
+roads <- as_sp(ctown, "lines")  # convert data to sp class
+plot(ij, col = adjustcolor('red', alpha.f = 0.6), border = NA)
+lines(roads,
+      col = adjustcolor('black', alpha.f = 0.6))
+
+```

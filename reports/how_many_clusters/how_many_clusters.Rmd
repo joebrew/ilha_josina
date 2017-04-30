@@ -188,3 +188,278 @@ The below interactive map shows all clusters, buffers, and child residents. Poin
 ```{r}
 l
 ```
+
+# Assignation to intervention
+
+
+```{r}
+# Create a dataframe of clusters
+clusters <- results %>%
+  group_by(cluster) %>%
+  summarise(x_centroid = mean(x),
+            y_centroid = mean(y)) %>%
+  filter(!is.na(cluster))
+
+# Set a random seed
+set.seed(510)
+
+# Create assignations
+clusters$status <- sample(c('intervention',
+                                'control'),
+                              nrow(clusters), 
+                              replace = TRUE)
+```
+
+We randomly assign all `nrow(clusters)` clusters to be of either "intervention" or "control" status. The assignments can be seen below.
+
+```{r}
+kable(clusters)
+```
+
+# Voronoi tesselation
+
+In order both to (a) expand our cluster boundaries to the maximum possible size and (b) create "implementation" zones (ie, areas defined by whether they receive the intervention or not), we perform Delaunay triangulation / Voroni tesselation.
+
+
+```{r}
+# Make a spatial version of results
+results_sp <- results %>% filter(!is.na(cluster))
+coordinates(results_sp) <- ~x+y
+
+# Create convex hulls
+ch <- list()
+for (i in 1:nrow(clusters)){
+  this_cluster <- clusters$cluster[i]
+  sub_results_sp <- results_sp[results_sp@data$cluster == this_cluster,]
+  x <- rgeos::gConvexHull(sub_results_sp)
+  ch[[i]] <- x
+}
+
+# Create delaunay triangulation / voronoi tiles for entire surface
+voronoi <- function(shp = results_sp){
+  
+  # shp@data <- data.frame(shp@data)
+  # 
+  # # Fix row names
+  # row.names(shp) <- 1:nrow(shp)
+  
+  # Remove any identical ones
+  shp <- shp[!duplicated(shp$lon, shp$lat),]
+  
+  # Helper function to create coronoi polygons (tesselation, not delaunay triangles)
+  # http://carsonfarmer.com/2009/09/voronoi-polygons-with-r/
+  voronoipolygons = function(layer) {
+    require(deldir)
+    crds = layer@coords
+    z = deldir(crds[,1], crds[,2])
+    w = tile.list(z)
+    polys = vector(mode='list', length=length(w))
+    require(sp)
+    for (i in seq(along=polys)) {
+      pcrds = cbind(w[[i]]$x, w[[i]]$y)
+      pcrds = rbind(pcrds, pcrds[1,])
+      polys[[i]] = Polygons(list(Polygon(pcrds)), ID=as.character(i))
+    }
+    SP = SpatialPolygons(polys)
+    voronoi = SpatialPolygonsDataFrame(SP, data=data.frame(x=crds[,1], 
+                                                           y=crds[,2], row.names=sapply(slot(SP, 'polygons'), 
+                                                                                        function(x) slot(x, 'ID'))))
+  }
+  # http://gis.stackexchange.com/questions/180682/merge-a-list-of-spatial-polygon-objects-in-r
+  appendSpatialPolygons <- function(x) {
+    ## loop over list of polygons
+    for (i in 2:length(x)) {
+      # create initial output polygon
+      if (i == 2) {
+        out <- maptools::spRbind(x[[i-1]], x[[i]])
+        # append all following polygons to output polygon  
+      } else {
+        out <- maptools::spRbind(out, x[[i]])
+      }
+    }
+    return(out)
+  }
+  
+  tile_polys <- voronoipolygons(shp)
+  # Add the cluster numbers
+  tile_polys@data$cluster <- the_clusters <- shp$cluster
+  cols <- rainbow(as.numeric(factor(tile_polys@data$cluster)))
+  
+  # Disolve borders
+  x = gUnaryUnion(tile_polys, id = tile_polys$cluster)
+  
+  jdata = SpatialPolygonsDataFrame(Sr=x, 
+                                   data=data.frame(cluster = as.numeric(as.character(names(x)))),FALSE)
+  
+  return(jdata)
+}
+
+# Get voronoi tesselations
+results_spv <- voronoi(shp = results_sp)
+
+```
+
+
+Having carried out the polygon delineation, we plot the clusters with expanded borders.
+
+```{r}
+# Plot in current state
+plot(results_spv)
+plot(ij, add = T, col = adjustcolor('blue', alpha.f = 0.2))
+```
+
+In the above, our methodology works well within Ilha Josina; but at borders, our neighborhoods expand infinitely outwards. In order to account for this, we can trim our polygons to keep only those segments which fall into Magude.
+
+```{r}
+# Narrow down so as to only keep those areas which are IN Magude
+proj4string(results_spv) <- proj4string(ij)
+out <- gIntersection(results_spv, ij, byid=TRUE)
+
+# Join with data
+row.names(out) <- as.character(1:length(out))
+out <- SpatialPolygonsDataFrame(out, data.frame(clusters), match.ID = FALSE)
+
+# Plot again
+plot(ij, col = adjustcolor('red', alpha.f = 0.2))
+plot(out, add = T, lwd = 0.2)
+```
+
+The below interactive map allows for manual examination of clusters. Click on any polygon to reveal its cluster number
+
+```{r}
+# Plot leaflet
+library(leaflet)
+leaflet() %>%
+  addProviderTiles(provider = 'Stamen.Toner') %>%
+  addPolygons(data = out,
+              color = 'green',
+              popup = paste0('Cluster ', as.character(out@data$cluster)))
+
+```
+
+# Defining intervention zones.
+
+Having expanded borders, we can re-calculate buffers based not on cluster number but on intervention status (since there is no need for a buffer between two clusters of identical intervention status).
+
+To do this, we first "dissolve" our polygons by intervention status, resulting in the following intrevention zones (red = intervention; green = control).
+
+```{r}
+collapsed <- gUnaryUnion(out, id = out@data$status)
+
+collapsed <- SpatialPolygonsDataFrame(collapsed, data.frame(zone = 1:length(collapsed@polygons)), 
+                                      match.ID = FALSE)
+
+# Get the intervention status
+tester <- clusters %>% filter(!duplicated(status))
+coordinates(tester) <- ~x_centroid+y_centroid
+proj4string(tester) <- proj4string(collapsed)
+x <- over(tester, polygons(collapsed))
+tester$zone <- collapsed@data$zone[x]
+tester <- tester@data %>%
+  dplyr::select(zone, status)
+
+# Join the intervention status to collapsed
+collapsed@data <-
+  left_join(x = collapsed@data,
+            y = tester,
+            by = 'zone')
+
+# Add a color
+collapsed@data$color <- ifelse(collapsed@data$status == 'control',
+                               'green',
+                               ifelse(collapsed@data$status == 'intervention',
+                                      'red', 'grey'))
+
+leaflet() %>%
+  addProviderTiles(provider = 'Stamen.Toner') %>%
+  addPolygons(data = collapsed,
+              color = collapsed@data$color)
+
+```
+
+We then re-define our buffers, based on our "dissolved" zones.
+
+```{r}
+# Transform to projected form
+collapsed_projected <- spTransform(collapsed, CRS( "+init=epsg:3347" ) )
+# Get buffer at 1km
+collapsed_projected_buffered <- rgeos::gBuffer(collapsed_projected, 
+                                               width = -1000,
+                                               byid = TRUE)
+# Un -project collapsed_projected_buffered
+collapsed_buffered <- spTransform(collapsed_projected_buffered, proj4string(ij))
+leaflet() %>%
+  addProviderTiles(provider = 'Stamen.Toner') %>%
+  addPolygons(data = collapsed_buffered,
+              color = collapsed_buffered@data$color)
+
+```
+
+
+## Data products
+
+Having finished our implementation of cluster delineation, we write software-agnostic shapefiles. The purpose of this step is to remove the data products (cluster and buffer delineations) from this report, so that others can use these clusters, regardless of their GIS software.
+
+We create 3 data products.
+
+### 1. `ij_clusters`
+
+`ij_clusters` is a projected shapefile with the exact boundaries between clusters
+
+```{r}
+plot(out,
+     col = rainbow(nrow(out)))
+library(rgdal)
+owd <- getwd()
+setwd('../../data_products/')
+writeOGR(obj=out, 
+         dsn="ij_clusters", 
+         layer = 'ij_clusters',
+         driver="ESRI Shapefile",
+         overwrite_layer = TRUE)
+setwd(owd)
+```
+
+### 2. `ij_intervention_zones`
+
+`ij_intervention_zones` is a projected shapefile with the exact boundaries of the intervention zones.
+
+```{r}
+plot(collapsed,
+     col = collapsed@data$color)
+owd <- getwd()
+setwd('../../data_products/')
+writeOGR(obj=out, 
+         dsn="ij_intervention_zones", 
+         layer = 'ij_intervention_zones',
+         driver="ESRI Shapefile",
+         overwrite_layer = TRUE)
+setwd(owd)
+```
+
+
+### 3. `ij_intervention_zones_buffered`
+
+`ij_intervention_zones_buffered` is a projected shapefile with the exact boundaries of the intervention zones with a -1000 meter inward buffer added to each zone.
+
+```{r}
+plot(collapsed_buffered,
+     col = collapsed_buffered@data$color)
+owd <- getwd()
+setwd('../../data_products/')
+writeOGR(obj=out, 
+         dsn="ij_intervention_zones_buffered", 
+         layer = 'ij_intervention_zones_buffered',
+         driver="ESRI Shapefile",
+         overwrite_layer = TRUE)
+setwd(owd)
+```
+
+
+The standard shapefile components now exist in our `magude_clusters` directory:
+
+```{r}
+dir('magude_clusters/')
+```
+
+They are available for download at www.github.com/joebrew/magude_clusters/magude_clusters. Once human inspection confirms the validity of this approach^[Humberto and Bea?], I will make the `magude_clusters` object part of the CISM package.
