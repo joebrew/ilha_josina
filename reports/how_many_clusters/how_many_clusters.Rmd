@@ -1,6 +1,6 @@
 ---
 title: "Ilha Josina Ivermectin Trial"
-subtitle: "Preliminary report: cluster identification"
+subtitle: "Preliminary report: cluster enumeration and delineation"
 author: "Joe Brew and Carlos Chaccour"
 date: "`r Sys.Date()`"
 output:
@@ -210,10 +210,12 @@ clusters$status <- sample(c('intervention',
                               replace = TRUE)
 ```
 
-We randomly assign all `nrow(clusters)` clusters to be of either "intervention" or "control" status. The assignments can be seen below.
+We randomly assign all `r nrow(clusters)` clusters to be of either "intervention" or "control" status. The assignments can be seen below.
 
 ```{r}
-kable(clusters)
+kable(clusters %>%
+        dplyr::select(-x_centroid,
+                      -y_centroid))
 ```
 
 # Voronoi tesselation
@@ -308,7 +310,7 @@ plot(results_spv)
 plot(ij, add = T, col = adjustcolor('blue', alpha.f = 0.2))
 ```
 
-In the above, our methodology works well within Ilha Josina; but at borders, our neighborhoods expand infinitely outwards. In order to account for this, we can trim our polygons to keep only those segments which fall into Magude.
+In the above, our methodology works well within Ilha Josina; but at borders, our neighborhoods expand infinitely outwards. In order to account for this, we can trim our polygons to keep only those segments which fall into Ilha Josina.
 
 ```{r}
 # Narrow down so as to only keep those areas which are IN Magude
@@ -324,16 +326,20 @@ plot(ij, col = adjustcolor('red', alpha.f = 0.2))
 plot(out, add = T, lwd = 0.2)
 ```
 
-The below interactive map allows for manual examination of clusters. Click on any polygon to reveal its cluster number
+The below interactive map allows for manual examination of clusters. Click on any polygon to reveal its cluster number and intervention status.
 
 ```{r}
+
+out@data$color <- ifelse(out@data$status == "control", "green",
+                         ifelse(out@data$status == "intervention", "red", "grey"))
 # Plot leaflet
 library(leaflet)
 leaflet() %>%
   addProviderTiles(provider = 'Stamen.Toner') %>%
   addPolygons(data = out,
-              color = 'green',
-              popup = paste0('Cluster ', as.character(out@data$cluster)))
+              color = out@data$color,
+              popup = paste0('Cluster ', as.character(out@data$cluster),
+                             '. Status: ', as.character(out@data$status))) 
 
 ```
 
@@ -341,7 +347,7 @@ leaflet() %>%
 
 Having expanded borders, we can re-calculate buffers based not on cluster number but on intervention status (since there is no need for a buffer between two clusters of identical intervention status).
 
-To do this, we first "dissolve" our polygons by intervention status, resulting in the following intrevention zones (red = intervention; green = control).
+To do this, we first "dissolve" our polygons by intervention status. This means removing boundaries between areas of the same intervention status. This results in the following intrevention zones (red = intervention; green = control).
 
 ```{r}
 collapsed <- gUnaryUnion(out, id = out@data$status)
@@ -377,7 +383,7 @@ leaflet() %>%
 
 ```
 
-We then re-define our buffers, based on our "dissolved" zones.
+We then use spatial buffering to re-define our buffers, going inwards 1,000 meters from the "dissolved" boundaries.
 
 ```{r}
 # Transform to projected form
@@ -404,7 +410,7 @@ We create 3 data products.
 
 ### 1. `ij_clusters`
 
-`ij_clusters` is a projected shapefile with the exact boundaries between clusters
+`ij_clusters` is a projected shapefile with the exact boundaries between clusters. It is downloadable from: https://github.com/joebrew/ilha_josina/tree/master/data_products/ij_clusters
 
 ```{r}
 plot(out,
@@ -422,7 +428,7 @@ setwd(owd)
 
 ### 2. `ij_intervention_zones`
 
-`ij_intervention_zones` is a projected shapefile with the exact boundaries of the intervention zones.
+`ij_intervention_zones` is a projected shapefile with the exact boundaries of the intervention zones. It is downloadble from: https://github.com/joebrew/ilha_josina/tree/master/data_products/ij_intervention_zones
 
 ```{r}
 plot(collapsed,
@@ -440,7 +446,7 @@ setwd(owd)
 
 ### 3. `ij_intervention_zones_buffered`
 
-`ij_intervention_zones_buffered` is a projected shapefile with the exact boundaries of the intervention zones with a -1000 meter inward buffer added to each zone.
+`ij_intervention_zones_buffered` is a projected shapefile with the exact boundaries of the intervention zones with a -1000 meter inward buffer added to each zone. It is downloadable from: https://github.com/joebrew/ilha_josina/tree/master/data_products/ij_intervention_zones_buffered
 
 ```{r}
 plot(collapsed_buffered,
@@ -455,11 +461,48 @@ writeOGR(obj=out,
 setwd(owd)
 ```
 
+# Increased catchment
 
-The standard shapefile components now exist in our `magude_clusters` directory:
 
 ```{r}
-dir('magude_clusters/')
+# Get zones
+results_sp <- results
+coordinates(results_sp) <- ~x+y
+proj4string(results_sp) <- proj4string(ij)
+x <- over(results_sp, collapsed_buffered)
+results_sp@data <- cbind(results_sp@data, x)
+
+# See which ones now get a zone
+results_sp@data <-
+  results_sp@data %>%
+  mutate(new_zone = is.na(cluster) & !is.na(zone))
 ```
 
-They are available for download at www.github.com/joebrew/magude_clusters/magude_clusters. Once human inspection confirms the validity of this approach^[Humberto and Bea?], I will make the `magude_clusters` object part of the CISM package.
+
+
+
+Though our dissolution method does not increase our number of clusters, it _does_ increase the catchment of each area. Whereas our previous population size was `r nrow(clusters) * 50`, having dissolved unecessary boundaries, we increase our estimated non-buffer population size by `r length(which(results_sp@data$new_zone))` to `r length(which(results_sp@data$new_zone)) + (nrow(clusters) * 50)`. In reality, given population growth since the time of the census, this figure may even be higher.
+
+The below map shows intervention assignments. Small dots represent children. Small dots in a triangle represent children who were originally considered to be in buffer areas (when buffers were drawn at the cluster level), but are now in "core" areas (when buffers are drawn at the intervention zone level).
+
+```{r}
+results_sp@data$color <- 
+  ifelse(is.na(results_sp@data$color),
+         'blue',
+         results_sp@data$color)
+plot(ij)
+points(results_sp, 
+     col = results_sp@data$color,
+     pch = '.')
+
+new_zone <- results_sp[which(results_sp@data$new_zone),]
+points(new_zone, 
+     col = new_zone@data$color,
+     pch  = 2,
+     cex = 0.5)
+```
+
+
+# Details
+
+All code for the methods discussed in this report is downloadable at: https://github.com/joebrew/ilha_josina/tree/master/reports/how_many_clusters
