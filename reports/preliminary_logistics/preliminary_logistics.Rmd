@@ -1,0 +1,335 @@
+---
+title: "Ilha Josina Ivermectin Trial"
+subtitle: "Preliminary logistics report"
+author: "Joe Brew, Patricia Nicolás Bellot, Carlos Chaccour"
+date: "`r Sys.Date()`"
+output:
+  tufte::tufte_html: default
+  tufte::tufte_handout:
+    citation_package: natbib
+    latex_engine: xelatex
+  tufte::tufte_book:
+    citation_package: natbib
+    latex_engine: xelatex
+link-citations: yes
+---
+
+```{r, include=FALSE}
+# invalidate cache when the tufte version changes
+knitr::opts_chunk$set(tidy = FALSE, 
+                    cache.extra = packageVersion('tufte'),
+                    comment = NA, 
+                     echo = FALSE, 
+                     warning = FALSE, 
+                     message = FALSE, 
+                     error = TRUE, 
+                     cache = FALSE)
+options(htmltools.dir.version = FALSE)
+```
+
+```{r}
+library(tufte)
+library(leaflet)
+library(tidyverse)
+library(knitr)
+library(leaflet)
+library(RColorBrewer)
+library(sp)
+library(rgeos)
+library(maptools)
+library(rgdal)
+library(rmarkdown)
+```
+
+
+```{r}
+library(cism)
+# Get map of manhica and ilha josina
+ij <- man3
+ij <- ij[ij$NAME_3 == 'Ilha Josina Machel',]
+
+# Make a simple version
+man3s <- gSimplify(man3,tol=0.1, topologyPreserve=TRUE)
+ijs <- gSimplify(ij,tol=0.02, topologyPreserve=TRUE)
+
+cols <- adjustcolor(grey(seq(0.01, 
+                                0.2, length = nrow(man3))), 
+                       alpha.f = 0.7)
+plot(man3s,
+     col = cols,
+     border = 'black',
+     lwd = 0.1)
+plot(ijs,
+     col = adjustcolor('darkorange', alpha.f = 0.9),
+     add = TRUE,
+     border = NA)
+
+# # Render the how many clusters report 
+# # (this is what generates the shapefiles in data products)
+# # as well as the census
+# this_wd <- getwd()
+# setwd('../how_many_clusters/')
+# render('how_many_clusters.Rmd')
+# setwd(this_wd)
+load('../how_many_clusters/prepared_data.RData')
+
+# Load shapefiles
+ij_clusters <- readOGR('../../data_products/ij_clusters/', verbose = FALSE)
+ij_intervention_zones <- readOGR('../../data_products/ij_intervention_zones/', verbose = FALSE)
+
+ij_intervention_zones_buffered <- readOGR('../../data_products/ij_intervention_zones_buffered/', verbose = FALSE)
+
+# Make a buffered version of clusters
+ij_clusters_buffered <- ij_clusters
+ij_clusters_buffered <- spTransform(ij_clusters_buffered, CRS( "+init=epsg:3347"))
+ij_clusters_buffered <- gBuffer(ij_clusters_buffered, byid = TRUE, width = -1000)
+# convert back to lat/lon
+ij_clusters_buffered <- spTransform(ij_clusters_buffered, CRS("+init=epsg:4326"))
+
+
+# Define snapshot date
+snap_shot <- as.Date('2016-05-06')
+
+# Get cluster assignment
+x <- census
+coordinates(x) <- ~longitude+latitude
+proj4string(x) <- proj4string(ij_clusters)
+z <- over(x, polygons(ij_clusters))
+x$cluster <- z
+census_sp <- x
+census <- x@data
+
+# Get whether in core or not
+z <- over(x, polygons(ij_intervention_zones_buffered))
+census_sp$in_buffer <- is.na(z)
+census_sp$in_core <- !is.na(z)
+census <- census_sp@data
+```
+
+```{r, eval = FALSE}
+leaflet() %>%
+  addProviderTiles('Esri.WorldImagery') %>%
+  addPolylines(data = ij)
+```
+
+# Introduction
+
+This document provides some summarical information pertaining to Ilha Josina, so as to plan and price logistics/operations. It was prepared by Joe Brew in early May, 2017, and this version was run on `r Sys.Date()`.
+
+# Data
+
+## Total population by cluster
+
+There are `r nrow(ij_clusters)` clusters in Ilha Josina. The boundaries are delineated in `https://github.com/joebrew/ilha_josina/tree/master/data_products/ij_clusters`. The below map shows those clusters and the location of their residents.
+
+```{r}
+plot(ij_clusters, 
+     col = 'grey', 
+     border = 'white',
+     lwd = 0.7,
+     lty = 2)
+points(census$longitude, 
+       census$latitude, 
+       pch = 16,
+       cex = 0.2,
+       col = adjustcolor('black', alpha.f = 0.2))
+```
+
+The below map shows the number of each cluster.
+
+```{r}
+plot(ij_clusters)
+text(x = ij_clusters$x_centroid,
+     y = ij_clusters$y_centroid,
+     label = ij_clusters@data$cluster,
+     cex = 0.7,
+     col = adjustcolor('darkred', alpha.f = 0.6))
+```
+
+The below table shows the population of each cluster.
+
+```{r}
+population_by_cluster <- 
+  x@data %>%
+  group_by(cluster) %>%
+  summarise(population = n())
+kable(population_by_cluster)
+```
+
+## Total population by cluster by age
+
+For our purposes, we are using a "snapshot" date for all age calculations. The below shows age as of `r snap_shot`.
+
+```{r}
+census$age <- as.numeric(snap_shot - census$dob) / 365.25
+census$age_group <- ifelse(census$age < 4, '00-3.99',
+                           ifelse(census$age < 10, '04-9.99',
+                                  ifelse(census$age < 15, '10-14.99',
+                                         ifelse(census$age >= 15, '15+', NA))))
+  
+  
+```
+
+The overall distribution of age among Ilha Josina residents is displayed in the below histogram.
+
+```{r}
+ggplot(data = census,
+       aes(x = age)) +
+  geom_density(fill = 'darkorange',
+               alpha = 0.6) +
+  labs(x = 'Years',
+       y = 'Density',
+       title = 'Population age distribution',
+       subtitle = paste0('Ilha Josina, as of ', snap_shot)) +
+  theme_cism()
+```
+
+If we group by dosage age group, we get the following:
+
+```{r}
+x <- census %>%
+  group_by(age_group) %>%
+  tally
+ggplot(data = x,
+       aes(x = age_group,
+           y = n)) +
+  geom_bar(stat = 'identity',
+           fill = 'darkorange',
+           alpha = 0.6,
+           color = 'black') +
+  geom_label(aes(label = n)) +
+  labs(x = 'Age group',
+       y = 'Residents',
+       title = 'Ilha Josina age groups') +
+  theme_cism()
+```
+
+By cluster and age group, the breakdown is below.
+
+```{r}
+x <- census %>% 
+  group_by(cluster, age_group) %>%
+  tally %>%
+  spread(key = age_group, value = n)
+kable(x)
+```
+
+## Women aged 15-49
+
+The below shows the number of women aged 15.0 to 49.99 per cluster.
+
+```{r}
+x <- census %>% 
+  filter(gender == 'F',
+         age >= 15,
+         age < 50) %>%
+  group_by(cluster) %>%
+  summarise(`women 15-49` = n()) 
+kable(x)
+```
+
+## Number of children < 15 in core areas
+
+Our population is divided into 11 clusters. However, we "collapse" borders and buffers between clusters of identical intervention assignation. 
+
+This means that instead of looking like the map on the left, our final "core" and "buffer" zones appear as the map on the right.
+
+```{r}
+par(mfrow = c(1,2))
+plot(ij_clusters_buffered, 
+     col = as.character(ij_clusters_buffered$color),
+     border = NA,
+     main = 'Cluster buffering')
+plot(ij_intervention_zones_buffered, 
+     col = as.character(ij_intervention_zones_buffered$color),
+     border = NA,
+     main = 'Intervention buffering')
+par(mfrow = c(1,1))
+```
+
+
+So, though one might be in his or her "cluster's" border, (s)he may count as "core" area for the purpose of the intervention.
+
+In the below, we use the term "buffer" to mean those zones which are between two clusters' cores of _different_ intervention status. In the case of people residing outside of their cluster's core, but not in an intervention buffer (ie, they are close to another cluster of identical intervention status), we still consider them "core". 
+
+Because of this classification system, some clusters have no residents in their "buffer area". This issue is discussed in more detail in the "Preliminary report: cluster enumeration and delineation"
+
+The below table shows the number of children aged 0 to 14.99 in core vs. buffer areas.
+
+```{r}
+x <- census %>%
+  mutate(location = ifelse(in_buffer, 'Buffer', 'Core')) %>%
+  group_by(cluster, location) %>%
+  tally %>%
+  spread(key = location, 
+          value = n)
+x$Buffer[is.na(x$Buffer)] <- 0
+
+kable(x)
+```
+
+## Average distances between houses by cluster
+
+The below chart shows the median distance between houses of the same cluster (point), with the line ranges showing the interquartile range (ie, 25th to 75th percentile).
+
+```{r}
+census_sp_projected <- spTransform(census_sp, CRS( "+init=epsg:3347"))
+# Define function for gettinb average distance by each cluster
+cluster_distance <- function(cluster_number = 1){
+  # Subset data
+  sub_data <- census_sp_projected[census_sp_projected$cluster == cluster_number,]
+  # Get distance
+  x <- gDistance(sub_data, byid = TRUE)
+  x <- as.numeric(x)
+  out <- data_frame(cluster = cluster_number,
+                    km = x / 1000)
+  return(out)
+}
+results_list <- list()
+for (i in 1:max(census$cluster)){
+  results_list[[i]] <- cluster_distance(cluster_number = i)
+}
+x <- bind_rows(results_list)
+
+# Aggregate
+xa <- x %>%
+  group_by(cluster) %>%
+  summarise(p50 = median(km),
+            p25 = quantile(km, 0.25),
+            p75 = quantile(km, 0.75))
+
+ggplot(data = xa,
+       aes(x = cluster)) +
+  geom_linerange(aes(ymax = p75,
+                     ymin = p25),
+                 alpha = 0.6) +
+  geom_point(aes(y = p50),
+             alpha = 0.7) +
+  labs(x = 'Cluster',
+       y = 'Kilometers',
+       title = 'Distances between houses',
+       subtitle = 'IQR and median') +
+  theme_cism()
+# Later, we can switch back to lat/long:
+#  spTransform(census_sp, CRS( "+init=epsg:3347"))
+# spTransform(census_spatial, CRS("+init=epsg:4326"))
+```
+
+The below table shows the same data.
+
+```{r}
+x <- xa
+names(x) <- c('cluster', 
+              'median',
+              '25th percentile',
+              '75th percentile')
+kable(x)
+```
+
+
+
+```{r}
+# 6) Could you also send us the census in excel or similar format?
+# write_csv(census, '~/Desktop/ij_census.csv')
+```
+

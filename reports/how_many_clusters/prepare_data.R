@@ -2,10 +2,16 @@
 # How many clusters can we create?
 # agnostic to village boundaries, etc.
 
+
+# Libraries
 library(tidyverse)
 library(RColorBrewer)
 library(cism)
 library(sp)
+
+# Algorithm for creating clusters
+source('../../lib/cluster_optimize.R')
+
 # Get data from openhds
 if('open_hds_data.RData' %in% dir()){
   load('open_hds_data.RData')
@@ -61,7 +67,8 @@ people <- membership %>%
                             firstName,
                             gender,
                             lastName,
-                            middleName),
+                            middleName,
+                            gender),
             by = c('individual_uuid' = 'uuid')) %>%
   left_join(location %>%
               dplyr::select(extId,
@@ -70,14 +77,9 @@ people <- membership %>%
                             longitude),
             by = 'extId')
 
-# Keep only those under 5 at time of snapshot
-people <- people %>% 
-  mutate(age_years = as.numeric(snap_shot - dob) / 365.25) %>%
-  filter(age_years <= 5)
-  
-
 people$longitude <- as.numeric(as.character(people$longitude))
 people$latitude <- as.numeric(as.character(people$latitude))
+
 
 # Get ilha josina
 ij <- man3
@@ -94,6 +96,13 @@ people <- people %>%
 people$ij[is.na(people$ij)] <- FALSE
 # Keep only ilha josina
 people <- people %>% filter(ij)
+
+census <- people
+
+# Keep only those under 5 at time of snapshot
+people <- people %>% 
+  mutate(age_years = as.numeric(snap_shot - dob) / 365.25) %>%
+  filter(age_years <= 5)
 
 # Create clusters, starting with the southern most point
 

@@ -23,17 +23,76 @@ library(leaflet)
 library(RColorBrewer)
 library(sp)
 library(rgeos)
+library(maptools)
+library(rgdal)
+
 # invalidate cache when the tufte version changes
 knitr::opts_chunk$set(tidy = FALSE, cache.extra = packageVersion('tufte'))
 options(htmltools.dir.version = FALSE)
 # Basic knitr options
-opts_chunk$set(comment = NA, 
+knitr::opts_chunk$set(comment = NA, 
                echo = FALSE, 
                warning = FALSE, 
                message = FALSE, 
                error = TRUE, 
                cache = FALSE)
+
+# Read gpx files
+
+# Define function for reading gpx files
+read_gpx <- function(file = "../../gpx/carlos.gpx",
+                     make_spatial = TRUE){
+  out <- readGPS(i = "gpx", 
+                      f = file, 
+                      type="t")
+  # Rename some columns
+  out <- out %>%
+    rename(date = V24,
+           seconds = V17,
+           longitude = V5,
+           latitude = V4,
+           altitude = V15,
+           distance_km = V23,
+           distance_mi = V22) %>%
+    dplyr::select(date,
+                  seconds,
+                  longitude,
+                  latitude,
+                  altitude,
+                  distance_km,
+                  distance_mi) %>%
+  mutate(seconds = seconds - dplyr::first(seconds)) %>%
+    mutate(x = longitude,
+           y = latitude)
+  
+  # Make spatial
+  if(make_spatial){
+    # coordinates(out) <- ~x+y
+    x <- Line(out[,c('longitude', 'latitude')])
+    x <- Lines(x, ID = 'a')
+    x <- list(x)
+    x <- SpatialLines(x)
+    out <- x
+    # out <- SpatialLinesDataFrame(sl = x,
+    #                              data = data.frame(ID = 'a'),
+    #                              match.ID = FALSE)
+    proj4string(out) <- CRS("+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0")
+  }
+  
+    
+  # Return
+  return(out)
+}
+
+# Get data
+gpx_carlos <- read_gpx("../../gpx/carlos.gpx")
+gpx_patricia <- read_gpx("../../gpx/patricia.gpx")
+
+# Lowest point
+lowest <- coordinates(gpx_carlos)[[1]][[1]][which.min(coordinates(gpx_carlos)[[1]][[1]][,2]),]
 ```
+
+## Publicly known roads
 
 ```{r}
 library(cism)
@@ -41,18 +100,47 @@ library(cism)
 ij <- man3
 ij <- ij[ij$NAME_3 == 'Ilha Josina Machel',]
 
+# Remove everything out of ij
+gpx_carlos = gIntersection(gpx_carlos, ij)
+gpx_patricia = gIntersection(gpx_patricia, ij)
+
+# Plot
+plot(ij)
+lines(gpx_carlos, col = 'red', type = 'l')
+lines(gpx_patricia, col = 'blue', type = 'l')
+
+
 library(osmar)
-src <- osmsource_api()
-bb <- corner_bbox(left = 32.8182,
-                  bottom = -25.3782,
-                  right = 33.1403,
-                  top = -25.0613)
-  # bb <- center_bbox(-1.53492, 53.81934, 1000, 1000)
-ctown <- get_osm(bb, source = src)
+if('public_roads.RData' %in% dir()){
+  load('public_roads.RData')
+} else {
+  src <- osmsource_api()
+  bb <- corner_bbox(left = 32.8182,
+                    bottom = -25.3782,
+                    right = 33.1403,
+                    top = -25.0613)
+  ctown <- get_osm(bb, source = src)
+  save(ctown, 
+       file = 'public_roads.RData')
+}
 
 roads <- as_sp(ctown, "lines")  # convert data to sp class
 plot(ij, col = adjustcolor('red', alpha.f = 0.6), border = NA)
 lines(roads,
       col = adjustcolor('black', alpha.f = 0.6))
+lines(gpx_carlos, col = 'red', type = 'l')
+lines(gpx_patricia, col = 'blue', type = 'l')
+
+
+leaflet() %>%
+  addProviderTiles('Esri.WorldImagery') %>%
+  addPolylines(data = gpx_carlos)
+```
+
+## The problem
+
+## The solution
+
+```{r}
 
 ```

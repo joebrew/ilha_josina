@@ -1,7 +1,7 @@
 ---
 title: "Ilha Josina Ivermectin Trial"
 subtitle: "Preliminary report: cluster enumeration and delineation"
-author: "Joe Brew and Carlos Chaccour"
+author: "Carlos Chaccour"
 date: "`r Sys.Date()`"
 output:
   tufte::tufte_html: default
@@ -36,15 +36,13 @@ opts_chunk$set(comment = NA,
 ```
 
 ```{r}
-# Algorithm for creating clusters
-source('../../lib/cluster_optimize.R')
-
 # Data preparation
 if('prepared_data.RData' %in% dir()){
   load('prepared_data.RData')
 } else {
   source('prepare_data.R')
   save(results,
+       census,
        ij,
        ij_children,
        file = 'prepared_data.RData')
@@ -435,7 +433,7 @@ plot(collapsed,
      col = collapsed@data$color)
 owd <- getwd()
 setwd('../../data_products/')
-writeOGR(obj=out, 
+writeOGR(obj=collapsed, 
          dsn="ij_intervention_zones", 
          layer = 'ij_intervention_zones',
          driver="ESRI Shapefile",
@@ -453,7 +451,7 @@ plot(collapsed_buffered,
      col = collapsed_buffered@data$color)
 owd <- getwd()
 setwd('../../data_products/')
-writeOGR(obj=out, 
+writeOGR(obj=collapsed_buffered, 
          dsn="ij_intervention_zones_buffered", 
          layer = 'ij_intervention_zones_buffered',
          driver="ESRI Shapefile",
