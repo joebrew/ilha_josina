@@ -1,6 +1,6 @@
 ---
 title: "Ilha Josina Ivermectin Trial"
-subtitle: "Preliminary report: where are the roads"
+subtitle: "Preliminary report: where are the roads?"
 author: "Joe Brew and Carlos Chaccour"
 date: "`r Sys.Date()`"
 output:
@@ -37,11 +37,20 @@ knitr::opts_chunk$set(comment = NA,
                error = TRUE, 
                cache = FALSE)
 
-# Read gpx files
+# # Render the how many clusters report 
+# # (this is what generates the shapefiles in data products)
+# # as well as the census
+# this_wd <- getwd()
+# setwd('../how_many_clusters/')
+# render('how_many_clusters.Rmd')
+# setwd(this_wd)
+load('../how_many_clusters/prepared_data.RData')
 
+
+# Read gpx files
 # Define function for reading gpx files
 read_gpx <- function(file = "../../gpx/carlos.gpx",
-                     make_spatial = TRUE){
+                     make_spatial = FALSE){
   out <- readGPS(i = "gpx", 
                       f = file, 
                       type="t")
@@ -63,7 +72,8 @@ read_gpx <- function(file = "../../gpx/carlos.gpx",
                   distance_mi) %>%
   mutate(seconds = seconds - dplyr::first(seconds)) %>%
     mutate(x = longitude,
-           y = latitude)
+           y = latitude,
+           file_name = file)
   
   # Make spatial
   if(make_spatial){
@@ -87,29 +97,57 @@ read_gpx <- function(file = "../../gpx/carlos.gpx",
 # Get data
 gpx_carlos <- read_gpx("../../gpx/carlos.gpx")
 gpx_patricia <- read_gpx("../../gpx/patricia.gpx")
+gpx_patricia_2 <- read_gpx("../../gpx/patricia2.gpx")
+gpx_joe <- read_gpx("../../gpx/joe.gpx")
+gpx_joe_2 <- read_gpx("../../gpx/joe2.gpx")
 
-# Lowest point
-lowest <- coordinates(gpx_carlos)[[1]][[1]][which.min(coordinates(gpx_carlos)[[1]][[1]][,2]),]
+# # Lowest point
+# lowest <- coordinates(gpx_carlos)[[1]][[1]][which.min(coordinates(gpx_carlos)[[1]][[1]][,2]),]
+
+# Combine all the gpx
+gpx <- bind_rows(gpx_carlos,
+                 gpx_joe,
+                 gpx_joe_2,
+                 gpx_patricia,
+                 gpx_patricia_2)
 ```
-
-## Publicly known roads
 
 ```{r}
 library(cism)
 # Get map of manhica and ilha josina
 ij <- man3
 ij <- ij[ij$NAME_3 == 'Ilha Josina Machel',]
+ij_fortified <- broom::tidy(ij, id = 'NAME_3')
 
 # Remove everything out of ij
-gpx_carlos = gIntersection(gpx_carlos, ij)
-gpx_patricia = gIntersection(gpx_patricia, ij)
+# gpx_carlos = gIntersection(gpx_carlos, ij)
+# gpx_patricia = gIntersection(gpx_patricia, ij)
 
-# Plot
-plot(ij)
-lines(gpx_carlos, col = 'red', type = 'l')
-lines(gpx_patricia, col = 'blue', type = 'l')
+# Make gpx spatial points
+gpx_sp <- gpx
+coordinates(gpx_sp) <- ~x+y
+proj4string(gpx_sp) <- CRS("+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0")
 
+# Remove those points outside of ij
+gpx_sp <- raster::intersect(gpx_sp, ij)
 
+# Converg back to df
+gpx <- gpx_sp@data
+
+# Clean up names
+gpx <-
+  gpx %>%
+  mutate(Source = gsub('../../gpx/|.gpx',
+                       '',
+                       file_name))
+gpx$Source <- Hmisc::capitalize(gpx$Source)
+```
+
+## Publicly known roads
+
+The below map shows those roads and paths which are publicly known, via the OpenStreetMaps database. 
+
+```{r}
 library(osmar)
 if('public_roads.RData' %in% dir()){
   load('public_roads.RData')
@@ -125,22 +163,108 @@ if('public_roads.RData' %in% dir()){
 }
 
 roads <- as_sp(ctown, "lines")  # convert data to sp class
-plot(ij, col = adjustcolor('red', alpha.f = 0.6), border = NA)
-lines(roads,
-      col = adjustcolor('black', alpha.f = 0.6))
-lines(gpx_carlos, col = 'red', type = 'l')
-lines(gpx_patricia, col = 'blue', type = 'l')
+# plot(ij, col = adjustcolor('red', alpha.f = 0.6), border = NA)
+# lines(roads,
+#       col = adjustcolor('black', alpha.f = 0.6))
+# lines(gpx_carlos, col = 'red', type = 'l')
+# lines(gpx_patricia, col = 'blue', type = 'l')
 
+roads_df <- broom::tidy(roads)
+# Keep only those NEAR ij
+roads_df <-
+  roads_df %>%
+  filter(long > 32.8,
+         long < 33.04,
+         lat > -25.35,
+         lat < -25.03)
 
-leaflet() %>%
-  addProviderTiles('Esri.WorldImagery') %>%
-  addPolylines(data = gpx_carlos)
+ggplot() +
+  geom_polygon(data = ij_fortified,
+               aes(x = long,
+                   y = lat,
+                   group = group),
+               color = NA, fill = 'blue',
+               alpha = 0.5) +
+  geom_path(data = roads_df,
+             aes(x = long,
+                 y = lat,
+                 group = group),
+            alpha = 0.6) +
+  coord_map() +
+  theme_cism_map()
+
+# leaflet() %>%
+#   addProviderTiles('Esri.WorldImagery') %>%
+#   addPolylines(data = gpx_carlos)
 ```
 
 ## The problem
 
+As can be seen above, with the exception of the northern most part, and some rivers which are incorrectly classified as roads, there exist almost no known roads.
+
+
 ## The solution
+
+We travel the roads ourselves, recording our location on mobile devices. The red lines mark the areas covered so far.
 
 ```{r}
 
+ggplot() +
+  geom_polygon(data = ij_fortified,
+               aes(x = long,
+                   y = lat,
+                   group = group),
+               color = NA, fill = 'blue',
+               alpha = 0.5) +
+  geom_path(data = roads_df,
+             aes(x = long,
+                 y = lat,
+                 group = group),
+            alpha = 0.6) +
+  coord_map() +
+  geom_path(data = gpx,
+            aes(x = longitude,
+                y = latitude,
+                group = Source),
+            color = 'red') +
+  theme_cism_map()
 ```
+
+## Proximity to residents
+
+The below map is identical to the above, with the one difference being that it also shows (as orange points) the location of known residents of Ilha Josina. The purpose of this map is to determine the potential need for and to guide further exploratory mapping, so as to geocode roads which are close to residents.
+
+```{r}
+
+ggplot() +
+  geom_polygon(data = ij_fortified,
+               aes(x = long,
+                   y = lat,
+                   group = group),
+               color = NA, fill = 'blue',
+               alpha = 0.5) +
+  geom_path(data = roads_df,
+             aes(x = long,
+                 y = lat,
+                 group = group),
+            alpha = 0.6) +
+  coord_map() +
+  theme_cism_map() +
+  geom_point(data = census,
+             aes(x = longitude,
+                 y = latitude),
+             alpha = 0.3,
+             size = 0.3,
+             color = 'orange') +
+    geom_path(data = gpx,
+            aes(x = longitude,
+                y = latitude,
+                group = Source),
+            color = 'red') 
+```
+
+## Next steps
+
+- Further mapping of the northwest corner?  
+- Calculate distance from residents to nearest known road.  
+

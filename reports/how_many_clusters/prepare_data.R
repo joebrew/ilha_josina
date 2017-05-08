@@ -2,7 +2,6 @@
 # How many clusters can we create?
 # agnostic to village boundaries, etc.
 
-
 # Libraries
 library(tidyverse)
 library(RColorBrewer)
@@ -25,15 +24,18 @@ if('open_hds_data.RData' %in% dir()){
   location <- 
     cism::get_data(tab = 'location',
                    dbname = 'openhds')
-  # locationhierarchy <- 
-  #   cism::get_data(tab = 'locationhierarchy',
-  #                  dbname = 'openhds')
-  # locationhierarchylevel <- 
-  #   cism::get_data(tab = 'locationhierarchylevel',
-  #                  dbname = 'openhds')
+  residency <-
+    cism::get_data(tab = 'residency',
+                   dbname = 'openhds')
+  VISIT_REGISTRATION_CORE <-
+    cism::get_data(tab = 'VISIT_REGISTRATION_CORE',
+                   dbname = 'dssodk')
+  
   save(membership,
        individual,
        location,
+       residency,
+       VISIT_REGISTRATION_CORE,
        file = 'open_hds_data.RData')
 }
 # Clean up -----------------------------------
@@ -43,25 +45,31 @@ individual$extId <- substr(individual$extId,
                            start = 1,
                            stop = 9)
 
+# Remove those with hh in permid, and by permid we mean lastname
+individual <- individual %>%
+  filter(!grepl('hh', tolower(lastName)))
+
 # Make data objects
-membership <- membership %>%
+
+residency <- residency %>%
   mutate(startDate = as.Date(startDate),
-         endDate = as.Date(endDate))
+         endDate = as.Date(endDate, origin = '1970-01-01'))
 individual$dob <- as.Date(individual$dob)
 
 # We're going to snapshot on. So, remove
 # those observations that come before/after, etc.
 snap_shot <- as.Date('2016-05-06')
-membership <- membership %>%
+residency <- residency %>%
   mutate(endDate = ifelse(is.na(endDate), snap_shot, endDate)) %>%
   filter(startDate <= snap_shot,
          endDate >= snap_shot)
 
 # Keep only those people as of the snap_shot date
-people <- membership %>%
-  dplyr::select(individual_uuid) %>%
+people <- residency %>%
+  dplyr::select(individual_uuid,
+                location_uuid) %>%
   left_join(individual %>%
-              dplyr::select(extId,
+              dplyr::select(#extId,
                             uuid,
                             dob,
                             firstName,
@@ -72,14 +80,32 @@ people <- membership %>%
             by = c('individual_uuid' = 'uuid')) %>%
   left_join(location %>%
               dplyr::select(extId,
+                            uuid,
                             latitude,
                             locationName,
                             longitude),
-            by = 'extId')
+            by = c('location_uuid' = 'uuid'))
 
 people$longitude <- as.numeric(as.character(people$longitude))
 people$latitude <- as.numeric(as.character(people$latitude))
 
+# Join to visit registration core from dssodk
+people <- people %>%
+left_join(VISIT_REGISTRATION_CORE %>%
+          dplyr::select(LOCATION_NAME,
+                        COORDINATES_LAT,
+                        COORDINATES_LNG) %>%
+            filter(!is.na(LOCATION_NAME),
+                   !is.na(COORDINATES_LAT),
+                   !is.na(COORDINATES_LNG)) %>%
+            filter(!duplicated(LOCATION_NAME)),
+          by = c('locationName' = 'LOCATION_NAME'))
+people$latitude <- 
+  ifelse(is.na(people$latitude), people$COORDINATES_LAT, people$latitude)
+people$longitude <- 
+  ifelse(is.na(people$longitude), people$COORDINATES_LNG, people$longitude)
+# Get location code
+people$is_ij <- substr(people$locationName, 1, 2) == '33'
 
 # Get ilha josina
 ij <- man3
@@ -96,6 +122,8 @@ people <- people %>%
 people$ij[is.na(people$ij)] <- FALSE
 # Keep only ilha josina
 people <- people %>% filter(ij)
+# people <- people %>% filter(is_ij)
+# people <- people %>% filter(!is.na(longitude), !is.na(latitude))
 
 census <- people
 
@@ -120,7 +148,7 @@ coordinates(ij_children) <- ~x+y
 proj4string(ij_children) <- proj4string(ij)
 
 
-# # Loop 
+# # Loop
 # results_list <- list()
 # counter <- 0
 # starts <- 'far' #c("far", "close", "random")
@@ -131,7 +159,7 @@ proj4string(ij_children) <- proj4string(ij)
 #     for(ww in walks){
 #       mm <- ifelse(ss == 'random' |
 #                      rr == 'random',
-#                    10, 
+#                    10,
 #                    1)
 #       for (i in 1:mm){
 #         counter <- counter + 1
@@ -160,21 +188,21 @@ proj4string(ij_children) <- proj4string(ij)
 #               each = nrow(ij_children))
 
 # Just do one
-start = 'far'
-rest = 'close'
-walk_along = TRUE
-
+walk_along <- FALSE
+start = 'close'
+rest = 'far'
 results = cluster_optimize(cluster_size = 50,
                      plot_map = FALSE,
                      locations = ij_children,
                      shp = ij,
                      sleep = 0,
-                     start = 'far',
-                     rest = 'close',
+                     start = start,
+                     rest = rest,
                      messaging = FALSE,
                      buffer = 1000,
-                     walk_along = TRUE) %>%
+                     walk_along = walk_along) %>%
   mutate(iter = 1,
          start = start,
          rest = rest,
          walk_along = walk_along)
+table(results$cluster)
