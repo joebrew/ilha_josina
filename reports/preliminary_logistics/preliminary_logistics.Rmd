@@ -39,14 +39,15 @@ library(rgeos)
 library(maptools)
 library(rgdal)
 library(rmarkdown)
+library(cism)
 ```
 
 
 ```{r}
-library(cism)
+# Prepare data
+source('../../lib/prepare_data.R', chdir = TRUE)
+
 # Get map of manhica and ilha josina
-ij <- man3
-ij <- ij[ij$NAME_3 == 'Ilha Josina Machel',]
 
 # Make a simple version
 man3s <- gSimplify(man3,tol=0.1, topologyPreserve=TRUE)
@@ -63,47 +64,6 @@ plot(ijs,
      col = adjustcolor('darkorange', alpha.f = 0.9),
      add = TRUE,
      border = NA)
-
-# # Render the how many clusters report 
-# # (this is what generates the shapefiles in data products)
-# # as well as the census
-# this_wd <- getwd()
-# setwd('../how_many_clusters/')
-# render('how_many_clusters.Rmd')
-# setwd(this_wd)
-load('../how_many_clusters/prepared_data.RData')
-
-# Load shapefiles
-ij_clusters <- readOGR('../../data_products/ij_clusters/', verbose = FALSE)
-ij_intervention_zones <- readOGR('../../data_products/ij_intervention_zones/', verbose = FALSE)
-
-ij_intervention_zones_buffered <- readOGR('../../data_products/ij_intervention_zones_buffered/', verbose = FALSE)
-
-# Make a buffered version of clusters
-ij_clusters_buffered <- ij_clusters
-ij_clusters_buffered <- spTransform(ij_clusters_buffered, CRS( "+init=epsg:3347"))
-ij_clusters_buffered <- gBuffer(ij_clusters_buffered, byid = TRUE, width = -1000)
-# convert back to lat/lon
-ij_clusters_buffered <- spTransform(ij_clusters_buffered, CRS("+init=epsg:4326"))
-
-
-# Define snapshot date
-snap_shot <- as.Date('2016-05-06')
-
-# Get cluster assignment
-x <- census
-coordinates(x) <- ~longitude+latitude
-proj4string(x) <- proj4string(ij_clusters)
-z <- over(x, polygons(ij_clusters))
-x$cluster <- z
-census_sp <- x
-census <- x@data
-
-# Get whether in core or not
-z <- over(x, polygons(ij_intervention_zones_buffered))
-census_sp$in_buffer <- is.na(z)
-census_sp$in_core <- !is.na(z)
-census <- census_sp@data
 ```
 
 ```{r, eval = FALSE}
@@ -150,10 +110,22 @@ The below table shows the population of each cluster.
 
 ```{r}
 population_by_cluster <- 
-  x@data %>%
+  census %>%
   group_by(cluster) %>%
   summarise(population = n())
 kable(population_by_cluster)
+```
+
+## Households per cluster
+
+The below table shows the number of households per cluster
+
+```{r}
+households_per_cluster <- 
+  census %>%
+  group_by(cluster) %>%
+  summarise(households = length(unique(household_id)))
+kable(households_per_cluster)
 ```
 
 ## Total population by cluster by age
@@ -161,12 +133,13 @@ kable(population_by_cluster)
 For our purposes, we are using a "snapshot" date for all age calculations. The below shows age as of `r snap_shot`.
 
 ```{r}
-census$age <- as.numeric(snap_shot - census$dob) / 365.25
-census$age_group <- ifelse(census$age < 4, '00-3.99',
-                           ifelse(census$age < 10, '04-9.99',
+census$age <- census$age_years
+census$age[census$age > 110] <- NA
+census$age_group <- ifelse(census$age <= 5, '00-05',
+                           ifelse(census$age < 10, '05.01-9.99',
                                   ifelse(census$age < 15, '10-14.99',
-                                         ifelse(census$age >= 15, '15+', NA))))
-  
+                                         ifelse(census$age < 110, '15+',
+                                                NA))))
   
 ```
 
@@ -208,6 +181,7 @@ By cluster and age group, the breakdown is below.
 
 ```{r}
 x <- census %>% 
+  filter(!is.na(age_group)) %>%
   group_by(cluster, age_group) %>%
   tally %>%
   spread(key = age_group, value = n)
@@ -228,7 +202,7 @@ x <- census %>%
 kable(x)
 ```
 
-## Number of children < 15 in core areas
+## Number of children < 5 in core areas
 
 Our population is divided into 11 clusters. However, we "collapse" borders and buffers between clusters of identical intervention assignation. 
 
@@ -254,18 +228,56 @@ In the below, we use the term "buffer" to mean those zones which are between two
 
 Because of this classification system, some clusters have no residents in their "buffer area". This issue is discussed in more detail in the "Preliminary report: cluster enumeration and delineation"
 
-The below table shows the number of children aged 0 to 14.99 in core vs. buffer areas.
+The below table shows the number of children aged 0 to 4.99 in core vs. buffer areas.
 
 ```{r}
 x <- census %>%
+  mutate(age_grp = ifelse(age <= 5, '0-5', '5.01+')) %>%
   mutate(location = ifelse(in_buffer, 'Buffer', 'Core')) %>%
-  group_by(cluster, location) %>%
+  group_by(cluster, location, age_grp) %>%
   tally %>%
+  ungroup %>%
   spread(key = location, 
-          value = n)
+          value = n) %>%
+  mutate(age_grp = ifelse(is.na(age_grp), 'unknown', age_grp))
 x$Buffer[is.na(x$Buffer)] <- 0
-
+x$Core[is.na(x$Core)] <- 0
+x$cluster <- factor(x$cluster)
+x <- x %>% filter(age_grp != 'unknown')
 kable(x)
+```
+
+The below is a chart of the same data.
+
+```{r}
+cols <- colorRampPalette(c('red', 'blue', 'green'))(length(unique(x$age_grp)))
+g1 <- ggplot(data = x,
+       aes(x = cluster,
+           y = Core,
+           group = age_grp,
+           fill = age_grp)) +
+  geom_bar(stat = 'identity',
+           position = 'dodge',
+           alpha = 0.6) +
+  scale_fill_manual(name = 'Age',
+                    values = cols) +
+  theme_cism() +
+  labs(x = 'Cluster',
+       title = 'Core')
+g2 <- ggplot(data = x,
+       aes(x = cluster,
+           y = Buffer,
+           group = age_grp,
+           fill = age_grp)) +
+  geom_bar(stat = 'identity',
+           position = 'dodge',
+           alpha = 0.6) +
+  scale_fill_manual(name = 'Age',
+                    values = cols) +
+  theme_cism() +
+  labs(x = 'Cluster',
+       title = 'Buffer')
+Rmisc::multiplot(g1, g2)
 ```
 
 ## Average distances between houses by cluster
@@ -297,6 +309,7 @@ xa <- x %>%
   summarise(p50 = median(km),
             p25 = quantile(km, 0.25),
             p75 = quantile(km, 0.75))
+xa$cluster <- factor(xa$cluster)
 
 ggplot(data = xa,
        aes(x = cluster)) +

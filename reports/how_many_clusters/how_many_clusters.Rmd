@@ -37,17 +37,7 @@ opts_chunk$set(comment = NA,
 
 ```{r}
 # Data preparation
-if('prepared_data.RData' %in% dir()){
-  load('prepared_data.RData')
-} else {
-  source('prepare_data.R')
-  save(results,
-       census,
-       ij,
-       ij_children,
-       file = 'prepared_data.RData')
-}
-
+source('../../lib/prepare_data.R', chdir = TRUE)
 
 # Get results of our simulations
 x <- results %>%
@@ -137,11 +127,11 @@ Of the `r nrow(ij_children)` residing in Ilha Josina as of the time of our snaps
 Our cluster centroids can be viewed below.
 
 ```{r}
-centroids <- best %>%
-  filter(!is.na(cluster)) %>%
-  group_by(cluster) %>%
-  summarise(lon = mean(lon),
-            lat = mean(lat))
+# centroids <- best %>%
+#   filter(!is.na(cluster)) %>%
+#   group_by(cluster) %>%
+#   summarise(lon = mean(lon),
+#             lat = mean(lat))
 plot(ij)
 points(centroids$lon,
        centroids$lat,
@@ -191,21 +181,21 @@ l
 
 
 ```{r}
-# Create a dataframe of clusters
-clusters <- results %>%
-  group_by(cluster) %>%
-  summarise(x_centroid = mean(x),
-            y_centroid = mean(y)) %>%
-  filter(!is.na(cluster))
-
-# Set a random seed
-set.seed(510)
-
-# Create assignations
-clusters$status <- sample(c('intervention',
-                                'control'),
-                              nrow(clusters), 
-                              replace = TRUE)
+# # Create a dataframe of clusters
+# clusters <- results %>%
+#   group_by(cluster) %>%
+#   summarise(x_centroid = mean(x),
+#             y_centroid = mean(y)) %>%
+#   filter(!is.na(cluster))
+# 
+# # Set a random seed
+# set.seed(510)
+# 
+# # Create assignations
+# clusters$status <- sample(c('intervention',
+#                                 'control'),
+#                               nrow(clusters), 
+#                               replace = TRUE)
 ```
 
 We randomly assign all `r nrow(clusters)` clusters to be of either "intervention" or "control" status. The assignments can be seen below.
@@ -222,80 +212,80 @@ In order both to (a) expand our cluster boundaries to the maximum possible size 
 
 
 ```{r}
-# Make a spatial version of results
-results_sp <- results %>% filter(!is.na(cluster))
-coordinates(results_sp) <- ~x+y
-
-# Create convex hulls
-ch <- list()
-for (i in 1:nrow(clusters)){
-  this_cluster <- clusters$cluster[i]
-  sub_results_sp <- results_sp[results_sp@data$cluster == this_cluster,]
-  x <- rgeos::gConvexHull(sub_results_sp)
-  ch[[i]] <- x
-}
-
-# Create delaunay triangulation / voronoi tiles for entire surface
-voronoi <- function(shp = results_sp){
-  
-  # shp@data <- data.frame(shp@data)
-  # 
-  # # Fix row names
-  # row.names(shp) <- 1:nrow(shp)
-  
-  # Remove any identical ones
-  shp <- shp[!duplicated(shp$lon, shp$lat),]
-  
-  # Helper function to create coronoi polygons (tesselation, not delaunay triangles)
-  # http://carsonfarmer.com/2009/09/voronoi-polygons-with-r/
-  voronoipolygons = function(layer) {
-    require(deldir)
-    crds = layer@coords
-    z = deldir(crds[,1], crds[,2])
-    w = tile.list(z)
-    polys = vector(mode='list', length=length(w))
-    require(sp)
-    for (i in seq(along=polys)) {
-      pcrds = cbind(w[[i]]$x, w[[i]]$y)
-      pcrds = rbind(pcrds, pcrds[1,])
-      polys[[i]] = Polygons(list(Polygon(pcrds)), ID=as.character(i))
-    }
-    SP = SpatialPolygons(polys)
-    voronoi = SpatialPolygonsDataFrame(SP, data=data.frame(x=crds[,1], 
-                                                           y=crds[,2], row.names=sapply(slot(SP, 'polygons'), 
-                                                                                        function(x) slot(x, 'ID'))))
-  }
-  # http://gis.stackexchange.com/questions/180682/merge-a-list-of-spatial-polygon-objects-in-r
-  appendSpatialPolygons <- function(x) {
-    ## loop over list of polygons
-    for (i in 2:length(x)) {
-      # create initial output polygon
-      if (i == 2) {
-        out <- maptools::spRbind(x[[i-1]], x[[i]])
-        # append all following polygons to output polygon  
-      } else {
-        out <- maptools::spRbind(out, x[[i]])
-      }
-    }
-    return(out)
-  }
-  
-  tile_polys <- voronoipolygons(shp)
-  # Add the cluster numbers
-  tile_polys@data$cluster <- the_clusters <- shp$cluster
-  cols <- rainbow(as.numeric(factor(tile_polys@data$cluster)))
-  
-  # Disolve borders
-  x = gUnaryUnion(tile_polys, id = tile_polys$cluster)
-  
-  jdata = SpatialPolygonsDataFrame(Sr=x, 
-                                   data=data.frame(cluster = as.numeric(as.character(names(x)))),FALSE)
-  
-  return(jdata)
-}
-
-# Get voronoi tesselations
-results_spv <- voronoi(shp = results_sp)
+# # Make a spatial version of results
+# results_sp <- results %>% filter(!is.na(cluster))
+# coordinates(results_sp) <- ~x+y
+# 
+# # Create convex hulls
+# ch <- list()
+# for (i in 1:nrow(clusters)){
+#   this_cluster <- clusters$cluster[i]
+#   sub_results_sp <- results_sp[results_sp@data$cluster == this_cluster,]
+#   x <- rgeos::gConvexHull(sub_results_sp)
+#   ch[[i]] <- x
+# }
+# 
+# # Create delaunay triangulation / voronoi tiles for entire surface
+# voronoi <- function(shp = results_sp){
+#   
+#   # shp@data <- data.frame(shp@data)
+#   # 
+#   # # Fix row names
+#   # row.names(shp) <- 1:nrow(shp)
+#   
+#   # Remove any identical ones
+#   shp <- shp[!duplicated(shp$lon, shp$lat),]
+#   
+#   # Helper function to create coronoi polygons (tesselation, not delaunay triangles)
+#   # http://carsonfarmer.com/2009/09/voronoi-polygons-with-r/
+#   voronoipolygons = function(layer) {
+#     require(deldir)
+#     crds = layer@coords
+#     z = deldir(crds[,1], crds[,2])
+#     w = tile.list(z)
+#     polys = vector(mode='list', length=length(w))
+#     require(sp)
+#     for (i in seq(along=polys)) {
+#       pcrds = cbind(w[[i]]$x, w[[i]]$y)
+#       pcrds = rbind(pcrds, pcrds[1,])
+#       polys[[i]] = Polygons(list(Polygon(pcrds)), ID=as.character(i))
+#     }
+#     SP = SpatialPolygons(polys)
+#     voronoi = SpatialPolygonsDataFrame(SP, data=data.frame(x=crds[,1], 
+#                                                            y=crds[,2], row.names=sapply(slot(SP, 'polygons'), 
+#                                                                                         function(x) slot(x, 'ID'))))
+#   }
+#   # http://gis.stackexchange.com/questions/180682/merge-a-list-of-spatial-polygon-objects-in-r
+#   appendSpatialPolygons <- function(x) {
+#     ## loop over list of polygons
+#     for (i in 2:length(x)) {
+#       # create initial output polygon
+#       if (i == 2) {
+#         out <- maptools::spRbind(x[[i-1]], x[[i]])
+#         # append all following polygons to output polygon  
+#       } else {
+#         out <- maptools::spRbind(out, x[[i]])
+#       }
+#     }
+#     return(out)
+#   }
+#   
+#   tile_polys <- voronoipolygons(shp)
+#   # Add the cluster numbers
+#   tile_polys@data$cluster <- the_clusters <- shp$cluster
+#   cols <- rainbow(as.numeric(factor(tile_polys@data$cluster)))
+#   
+#   # Disolve borders
+#   x = gUnaryUnion(tile_polys, id = tile_polys$cluster)
+#   
+#   jdata = SpatialPolygonsDataFrame(Sr=x, 
+#                                    data=data.frame(cluster = as.numeric(as.character(names(x)))),FALSE)
+#   
+#   return(jdata)
+# }
+# 
+# # Get voronoi tesselations
+# results_spv <- voronoi(shp = results_sp)
 
 ```
 
@@ -413,15 +403,6 @@ We create 3 data products.
 ```{r}
 plot(out,
      col = rainbow(nrow(out)))
-library(rgdal)
-owd <- getwd()
-setwd('../../data_products/')
-writeOGR(obj=out, 
-         dsn="ij_clusters", 
-         layer = 'ij_clusters',
-         driver="ESRI Shapefile",
-         overwrite_layer = TRUE)
-setwd(owd)
 ```
 
 ### 2. `ij_intervention_zones`
@@ -431,14 +412,6 @@ setwd(owd)
 ```{r}
 plot(collapsed,
      col = collapsed@data$color)
-owd <- getwd()
-setwd('../../data_products/')
-writeOGR(obj=collapsed, 
-         dsn="ij_intervention_zones", 
-         layer = 'ij_intervention_zones',
-         driver="ESRI Shapefile",
-         overwrite_layer = TRUE)
-setwd(owd)
 ```
 
 
@@ -449,31 +422,23 @@ setwd(owd)
 ```{r}
 plot(collapsed_buffered,
      col = collapsed_buffered@data$color)
-owd <- getwd()
-setwd('../../data_products/')
-writeOGR(obj=collapsed_buffered, 
-         dsn="ij_intervention_zones_buffered", 
-         layer = 'ij_intervention_zones_buffered',
-         driver="ESRI Shapefile",
-         overwrite_layer = TRUE)
-setwd(owd)
 ```
 
 # Increased catchment
 
 
 ```{r}
-# Get zones
-results_sp <- results
-coordinates(results_sp) <- ~x+y
-proj4string(results_sp) <- proj4string(ij)
-x <- over(results_sp, collapsed_buffered)
-results_sp@data <- cbind(results_sp@data, x)
-
-# See which ones now get a zone
-results_sp@data <-
-  results_sp@data %>%
-  mutate(new_zone = is.na(cluster) & !is.na(zone))
+# # Get zones
+# results_sp <- results
+# coordinates(results_sp) <- ~x+y
+# proj4string(results_sp) <- proj4string(ij)
+# x <- over(results_sp, collapsed_buffered)
+# results_sp@data <- cbind(results_sp@data, x)
+# 
+# # See which ones now get a zone
+# results_sp@data <-
+#   results_sp@data %>%
+#   mutate(new_zone = is.na(cluster) & !is.na(zone))
 ```
 
 
@@ -484,16 +449,10 @@ Though our dissolution method does not increase our number of clusters, it _does
 The below map shows intervention assignments. Small dots represent children. Small dots in a triangle represent children who were originally considered to be in buffer areas (when buffers were drawn at the cluster level), but are now in "core" areas (when buffers are drawn at the intervention zone level).
 
 ```{r}
-results_sp@data$color <- 
-  ifelse(is.na(results_sp@data$color),
-         'blue',
-         results_sp@data$color)
 plot(ij)
 points(results_sp, 
      col = results_sp@data$color,
      pch = '.')
-
-new_zone <- results_sp[which(results_sp@data$new_zone),]
 points(new_zone, 
      col = new_zone@data$color,
      pch  = 2,

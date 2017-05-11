@@ -37,15 +37,8 @@ knitr::opts_chunk$set(comment = NA,
                error = TRUE, 
                cache = FALSE)
 
-# # Render the how many clusters report 
-# # (this is what generates the shapefiles in data products)
-# # as well as the census
-# this_wd <- getwd()
-# setwd('../how_many_clusters/')
-# render('how_many_clusters.Rmd')
-# setwd(this_wd)
-load('../how_many_clusters/prepared_data.RData')
-
+# Prepare data
+source('../../lib/prepare_data.R', chdir = TRUE)
 
 # Read gpx files
 # Define function for reading gpx files
