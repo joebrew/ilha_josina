@@ -1,7 +1,7 @@
 ---
 title: "Ilha Josina Ivermectin Trial"
 subtitle: "Preliminary logistics report"
-author: "Joe Brew, Patricia Nicolás Bellot, Carlos Chaccour"
+author: "Joe Brew, Patricia Nicolás, Carlos Chaccour"
 date: "`r Sys.Date()`"
 output:
   tufte::tufte_html: default
@@ -185,6 +185,22 @@ x <- census %>%
   group_by(cluster, age_group) %>%
   tally %>%
   spread(key = age_group, value = n)
+
+# Also get 0 to 4
+y <- census %>%
+  filter(age_years <= 4) %>%
+  group_by(cluster) %>%
+  summarise(`00-04` = n())
+x <- left_join(y,x)
+
+# Also get < 1
+y <- census %>%
+  filter(age_years < 1) %>%
+  group_by(cluster) %>%
+  summarise(`< 1` = n())
+x <- left_join(y,x)
+
+x <- x 
 kable(x)
 ```
 

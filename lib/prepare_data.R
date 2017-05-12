@@ -163,6 +163,7 @@ if('prepared_data.RData' %in% dir('../data')){
   # Keep only those under 5 at time of snapshot
   people <- people %>% 
     filter(age_years <= 5)
+    # filter(age_years < 1)
   
   # Create clusters, starting with the southern most point
   
@@ -222,7 +223,7 @@ if('prepared_data.RData' %in% dir('../data')){
   
   # Just do one
   walk_along <- FALSE
-  start = 'close'
+  start = 'close' # 1 5 change back to close for 5
   rest = 'far'
   results = cluster_optimize(cluster_size = 52,
                              plot_map = FALSE,

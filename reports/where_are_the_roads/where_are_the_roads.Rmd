@@ -1,7 +1,7 @@
 ---
 title: "Ilha Josina Ivermectin Trial"
 subtitle: "Preliminary report: where are the roads?"
-author: "Joe Brew and Carlos Chaccour"
+author: "Joe Brew, Patricia Nicolás, Carlos Chaccour"
 date: "`r Sys.Date()`"
 output:
   tufte::tufte_html: default
